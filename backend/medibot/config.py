@@ -16,15 +16,22 @@ load_dotenv()
 # --- Paths -----------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+
+
+def _path(env_var: str, default: Path) -> Path:
+    """Path from .env, or default. Relative values are anchored to REPO_ROOT, not to
+    the shell's cwd, so `STORE_DIR=./store` means the same thing from backend/ or /."""
+    value = os.getenv(env_var)
+    return (REPO_ROOT / value).resolve() if value else default
+
+
 # data/  : inputs exactly as given. Never modified.
-DATA_DIR = Path(os.getenv("DATA_DIR", REPO_ROOT / "data"))
-DB_PATH = Path(os.getenv("DB_PATH", DATA_DIR / "db" / "mediassist.db"))
+DATA_DIR = _path("DATA_DIR", REPO_ROOT / "data")
+DB_PATH = _path("DB_PATH", DATA_DIR / "db" / "mediassist.db")
 
 # store/ : everything preparation produces and the app reads. Wipe + re-run prep rebuilds it.
-STORE_DIR = Path(os.getenv("STORE_DIR", REPO_ROOT / "store"))
+STORE_DIR = _path("STORE_DIR", REPO_ROOT / "store")
 QDRANT_PATH = STORE_DIR / "qdrant"                    # embedded Qdrant, gitignored
-SQL_CONTEXT_PATH = STORE_DIR / "sql" / "schema_context.md"   # generated: DDL + value hints
-SQL_EXAMPLES_PATH = STORE_DIR / "sql" / "examples.md"        # hand-written question -> SQL pairs
 
 # --- Roles & collections ---------------------------------------------------
 # Folder name under DATA_DIR == collection name. Source: assignment "Data Sources" table.

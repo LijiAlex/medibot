@@ -28,8 +28,9 @@ Parsing also gets a sanity check: the same file has come back with a different
 item set in the same session (a missed heading, once a half-parsed document).
 Root cause turned out to be a docling-parse threading race (see _converter);
 the check stays as a safety net. Every page must yield content and the document
-must have at least one heading, and at least 80% of the raw text-line words
-must survive into content items; otherwise parse once more, then fail loudly.
+must have at least one heading, every page in the file must come back, and at
+least 80% of the raw text-line words must survive into content items; otherwise
+parse once more, then fail loudly.
 """
 
 from __future__ import annotations
@@ -85,10 +86,13 @@ def _converter() -> DocumentConverter:
     # docling-parse <= 7.16.0 has a race in its font-metrics cache when Docling's
     # default threaded backend decodes pages on 4 native threads: intermittent
     # heap corruption (exit 134/139) and, worse, silent per-page decode failures
-    # that look like a normal parse with content missing (docling#4147). Fixed in
-    # docling-parse 7.17.0 (2026-09-02). Single-threaded parsing avoids it at a
-    # small speed cost. TODO after 2026-09-09 (7-day cooldown): upgrade
-    # docling-parse >= 7.17.0 and drop backend_options.
+    # that look like a normal parse with content missing (docling#4147). Reported
+    # fixed in docling-parse 7.17.0 (2026-09-02), but the issue thread and release
+    # notes do not confirm it. Single-threaded parsing avoids it; measured cost on
+    # a warm 8-page parse was 5.0 s -> 5.1 s. TODO after 2026-09-09 (cooldown):
+    # upgrade docling-parse >= 7.17.0, then prove stability (parse a 9-page PDF
+    # 6x with the default threaded backend, all pages present every time) BEFORE
+    # dropping backend_options.
     backend_opts = ThreadedDoclingParseBackendOptions(parser_threads=1)
     return DocumentConverter(
         format_options={
@@ -205,6 +209,13 @@ def _sanity_problems(result: ConversionResult) -> list[str]:
     if not any(t.label in (DocItemLabel.SECTION_HEADER, DocItemLabel.TITLE) for t in doc.texts):
         problems.append("no headings detected")
     if result.pages:  # PDF only; markdown has no pages
+        # Under the docling-parse threading race, lost pages are ABSENT from result.pages,
+        # not present-and-empty, and their raw text lines vanish with them, so neither the
+        # empty-page test nor the word ratio below can see it. Compare against the file's
+        # true page count first.
+        expected = getattr(result.input, "page_count", 0) or 0
+        if expected and len(result.pages) != expected:
+            problems.append(f"only {len(result.pages)} of {expected} pages returned")
         per_page: dict[int, int] = {}
         for item, _ in doc.iterate_items():
             if item.label not in FURNITURE and item.prov:
