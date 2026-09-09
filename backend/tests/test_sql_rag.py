@@ -182,8 +182,10 @@ def test_answer_shape_for_permitted_role():
     res = answer("How many claims did hdfc ergo approve?", "billing_executive")
     assert isinstance(res, RagResult)
     assert res.retrieval_type == "sql_rag" and res.role == "billing_executive"
-    assert len(res.sources) == 1 and set(res.sources[0]) == {"sql", "rows"}
-    assert res.sources[0]["sql"].upper().startswith("SELECT") and res.sources[0]["rows"] == 1
+    # Spec line 171 shape on every branch; the query itself rides in res.sql (line 168 is a minimum).
+    assert len(res.sources) == 1 and set(res.sources[0]) == {"source_document", "section_title", "collection"}
+    assert res.sources[0] == {"source_document": "mediassist.db", "section_title": "claims", "collection": "sql"}
+    assert res.sql.upper().startswith("SELECT")
 
 
 def test_answer_refuses_roles_without_analytics_and_never_writes_sql(monkeypatch):
@@ -194,6 +196,7 @@ def test_answer_refuses_roles_without_analytics_and_never_writes_sql(monkeypatch
         assert role not in SQL_RAG_ROLES
         res = answer("How many claims were escalated in March 2024?", role)
         assert res.retrieval_type == "sql_rag" and res.sources == [] and res.role == role
+        assert res.sql is None
         assert "not available" in res.answer.lower()
 
 
@@ -221,6 +224,6 @@ def test_relative_date_question_is_answered_against_the_real_clock_and_explains_
     # "last month" is a 2026 window; the data is 2024. Zero rows is the right answer,
     # and the reply must say why, so the user does not read "0" as a finding.
     res = answer("How many billing claims were escalated last month?", "admin")
-    assert res.sources[0]["rows"] == 1                         # one COUNT row
+    assert res.sources[0]["collection"] == "sql"
     assert "2024" in res.answer, res.answer                    # span disclosed
-    assert "date('now'" in res.sources[0]["sql"] or "2026" in res.sources[0]["sql"]
+    assert "date('now'" in res.sql or "2026" in res.sql

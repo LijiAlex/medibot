@@ -19,6 +19,7 @@ Read-only is enforced at the driver (SQLite `mode=ro`), not by trusting the LLM'
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from functools import lru_cache
@@ -31,6 +32,8 @@ from langchain_core.runnables import Runnable, RunnableLambda
 
 from medibot.config import DB_PATH, SQL_RAG_ROLES
 from medibot.retrieval.hybrid_rag import RagResult, get_llm
+
+logger = logging.getLogger(__name__)
 
 _URI = f"sqlite:///file:{DB_PATH}?mode=ro&uri=true"
 
@@ -164,6 +167,18 @@ def _run(question: str) -> tuple[str, list[tuple], str]:
     return sql, rows, f"{prose.strip()}\n\n{LIMIT_NOTE}"
 
 
+def _sources(sql: str) -> list[dict]:
+    """Spec line 171 shape, honestly filled: the database is the source document and the
+    table is the section within it. The query itself goes in RagResult.sql, because
+    section_title is defined as a chunk heading (spec line 77), not a place for SQL."""
+    lowered = sql.lower()
+    return [
+        {"source_document": DB_PATH.name, "section_title": table, "collection": "sql"}
+        for table in get_db().get_usable_table_names()
+        if table.lower() in lowered
+    ]
+
+
 def sql_rag_chain(question: str) -> str:
     """Spec, Component 4: plain function, natural-language question in, prose answer out.
     Raises ValueError if the LLM produced nothing that cleans to a SELECT (after one retry)."""
@@ -184,4 +199,5 @@ def answer(question: str, role: str) -> RagResult:
             answer="I could not form a database query from that question. Please rephrase it.",
             retrieval_type="sql_rag", role=role,
         )
-    return RagResult(answer=text, sources=[{"sql": sql, "rows": len(rows)}], retrieval_type="sql_rag", role=role)
+    logger.info("sql_rag role=%s rows=%d sql=%s", role, len(rows), sql.replace("\n", " "))
+    return RagResult(answer=text, sources=_sources(sql), retrieval_type="sql_rag", role=role, sql=sql)

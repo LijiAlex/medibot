@@ -14,6 +14,7 @@ dependencies = [
     "langchain-qdrant>=1.1.0",
     "python-dotenv>=1.2.3",
     "qdrant-client>=1.19.0",
+    "semantic-router[local]>=0.1.16",
     "sentence-transformers>=6.0.0",
     "transformers>=5.8.1",
 ]

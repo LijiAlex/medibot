@@ -65,6 +65,7 @@ class RagResult:
     sources: list[dict] = field(default_factory=list)  # {source_document, section_title, collection}
     retrieval_type: str = "hybrid_rag"                 # "hybrid_rag" | "sql_rag"
     role: str = ""
+    sql: str | None = None                             # SQL branch only; spec line 168 is a minimum
 
 
 SYSTEM_PROMPT = """You are MediBot, an internal assistant for hospital staff.
