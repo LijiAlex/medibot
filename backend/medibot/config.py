@@ -75,3 +75,9 @@ CHUNK_MAX_TOKENS = int(os.getenv("CHUNK_MAX_TOKENS", str(EMBED_MAX_TOKENS - HEAD
 # --- Retrieval -------------------------------------------------------------
 RETRIEVE_K = 10   # broad hybrid candidate set
 RERANK_TOP_N = 3  # what actually reaches the LLM
+
+# Below this top-1 rerank score, nothing retrieved is relevant and the LLM is not called.
+# Not a tuned number: the ms-marco cross-encoder emits a relevance logit whose own
+# decision boundary is zero. Measured on this corpus, the worst answerable question
+# scored +2.57 and the best blocked one −7.99.
+RELEVANCE_THRESHOLD = 0.0

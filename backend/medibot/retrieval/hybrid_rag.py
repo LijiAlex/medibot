@@ -10,6 +10,7 @@ chunks the role may not see are never returned to this process at all.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -19,8 +20,19 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 
-from medibot.config import LLM_MODEL, RERANK_MODEL, RERANK_TOP_N, RETRIEVE_K
+from medibot.config import (
+    LLM_MODEL,
+    RELEVANCE_THRESHOLD,
+    RERANK_MODEL,
+    RERANK_TOP_N,
+    RETRIEVE_K,
+    ROLE_COLLECTIONS,
+)
+from medibot.retrieval.collection_router import classify
 from medibot.vectorstore import get_vectorstore, rbac_filter
+
+
+logger = logging.getLogger(__name__)
 
 
 def retrieve(question: str, role: str, k: int = RETRIEVE_K) -> list[Document]:
@@ -98,9 +110,57 @@ def _sources(ranked: list[tuple[Document, float]]) -> list[dict]:
     ]
 
 
+def _english_list(items: list[str]) -> str:
+    """['a', 'b', 'c'] -> 'a, b and c'."""
+    if len(items) == 1:
+        return items[0]
+    return f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def _describe(role: str) -> str:
+    """'billing_executive' -> 'a billing executive'."""
+    words = role.replace("_", " ")
+    return f"{'an' if words[0] in 'aeiou' else 'a'} {words}"
+
+
+def _refusal(question: str, role: str) -> str:
+    """Why nothing came back, in the words the spec asks for (Component 6).
+
+    Two different situations reach here, and conflating them would mean telling a doctor
+    they lack access to the clinical collection they can read:
+
+      the question belongs to a collection this role may not read  -> say so, name it
+      the question belongs to one they may read, or to none at all -> say we found nothing
+
+    The classifier only ever runs here, on a question retrieval has already failed, so a
+    misclassification changes the wording of a refusal and never causes one.
+    """
+    permitted = ROLE_COLLECTIONS[role]
+    collection = classify(question)
+    if collection is not None and collection not in permitted:
+        return (
+            f"As {_describe(role)}, you don't have access to {collection} documents. "
+            f"I can only answer questions from the {_english_list(permitted)} collections."
+        )
+    return (
+        "I couldn't find anything about that in the documents you can access "
+        f"({_english_list(permitted)})."
+    )
+
+
 def answer(question: str, role: str) -> RagResult:
-    """retrieve -> rerank -> LLM. Only the reranked top_n reaches the prompt (spec, Component 3)."""
+    """retrieve -> rerank -> LLM. Only the reranked top_n reaches the prompt (spec, Component 3).
+
+    The gate in between: if the best chunk scores below RELEVANCE_THRESHOLD, nothing
+    retrieved answers the question, so we explain why instead of asking the LLM to
+    improvise over irrelevant context. That path costs no Groq call and cites nothing,
+    because nothing was used.
+    """
     ranked = rerank(question, retrieve(question, role))
+    if not ranked or ranked[0][1] < RELEVANCE_THRESHOLD:
+        top = ranked[0][1] if ranked else None
+        logger.info("hybrid_rag refused role=%s top1=%s question=%r", role, top, question)
+        return RagResult(answer=_refusal(question, role), retrieval_type="hybrid_rag", role=role)
     chain = PROMPT | get_llm() | StrOutputParser()
     text = chain.invoke({"context": _format_context(ranked), "question": question})
     return RagResult(answer=text, sources=_sources(ranked), retrieval_type="hybrid_rag", role=role)
