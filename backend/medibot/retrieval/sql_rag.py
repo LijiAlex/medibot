@@ -132,9 +132,14 @@ def _sql_writer() -> Runnable:
     reads the schema through get_db().get_table_info(), so the value hints ride along.
     clean_sql is piped on the end, so what comes out is one bare SELECT or a ValueError."""
     chain = create_sql_query_chain(get_llm(), get_db()) | RunnableLambda(clean_sql)
-    # Measured 2026-09-09: 1 in 5 runs the helper returns "" for some questions even at
-    # temperature 0. One retry, ValueError only; anything else propagates.
-    return chain.with_retry(retry_if_exception_type=(ValueError,), stop_after_attempt=2, wait_exponential_jitter=False)
+    # Retry on a ValueError from clean_sql, meaning the model produced nothing usable.
+    # This existed because gpt-oss-20b returned an empty string on roughly a quarter of
+    # calls: the helper stops generation at "\nSQLResult:" and that model sometimes began
+    # its visible output at that line. Retrying helped less than it looks, since the
+    # failures correlate at temperature 0. Switching to gpt-oss-120b removed the cause
+    # (5/5 usable there), and this stays as cheap insurance: it costs nothing when the
+    # first attempt succeeds, and a genuinely bad query still propagates.
+    return chain.with_retry(retry_if_exception_type=(ValueError,), stop_after_attempt=4, wait_exponential_jitter=False)
 
 
 def write_sql(question: str) -> str:

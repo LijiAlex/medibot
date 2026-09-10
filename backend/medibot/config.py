@@ -60,7 +60,13 @@ DENSE_MODEL = "sentence-transformers/all-MiniLM-L6-v2"   # 384-d, cosine, 256-to
 DENSE_DIM = 384
 SPARSE_MODEL = "Qdrant/bm25"
 RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")  # via Groq
+# openai/gpt-oss-120b via Groq. Was gpt-oss-20b until 2026-09-10: with the 20b model,
+# create_sql_query_chain returned an empty string on about a quarter of calls, because it
+# stops generation at "\nSQLResult:" and the 20b model sometimes begins its visible output
+# at that line. Measured on the same prompt and question, 120b was usable 5/5 with the
+# stop token and 20b 3/4 without it. Groq's daily token cap is per model, so this also
+# came with a fresh budget.
+LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
 
 # --- Chunking --------------------------------------------------------------
 # EMBED_MAX_TOKENS: DENSE_MODEL's max sequence length. Anything longer is silently
