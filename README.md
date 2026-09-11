@@ -57,6 +57,70 @@ return a billing chunk, however the question is worded.
 The router runs before the role gate, so a question is classified the same way for
 everyone and only the outcome depends on who is asking.
 
+## Ingestion
+
+Run once, before the app. Twelve documents become 283 chunks in an embedded Qdrant
+store, each carrying the metadata the retrieval filter depends on.
+
+```
+  data/<collection>/<file>          the folder IS the collection, and roles come from
+       |                            config, never from the file, so a document cannot
+       |                            widen its own access
+       v
+  parse with Docling                structure-aware: headings, tables, reading order
+       |                            pre:  strip **bold** and `inline code` first
+       |                            post: hoist table footnotes, then sanity-check
+       v
+  HybridChunker                     hierarchical first: one chunk per leaf item, tagged
+       |                            with its heading path. Then token-aware: split
+       |                            oversized tables into row windows, merge undersized
+       |                            siblings that share a heading path
+       v
+  prepare                           prepend "Title > Section > Subsection" to the body,
+       |                            attach the five metadata fields, mint a deterministic
+       |                            id from source and chunk index
+       v
+  embed twice                       MiniLM dense vector + BM25 sparse vector, both stored
+       |                            on the same point so one query can use both
+       v
+  Qdrant                            per document: delete its old points by source, then
+                                    upsert. Re-running is idempotent even when a document
+                                    now produces fewer chunks than before.
+```
+
+Three corpus-specific adjustments, each found by reading real output rather than by
+guessing.
+
+**PDF headings all arrived at level 1.** Docling's layout model flags a heading but not
+its rank, so a sub-heading overwrote its parent and a breadcrumb read `Manual > Frequency`
+instead of `Manual > SOP 1 - CVC Care > Frequency`. Docling has `HeadingHierarchyOptions`
+built in, which infers rank from bookmarks, numbering and font style. These PDFs have no
+bookmarks; numbering and style are enough.
+
+**Markdown list items were being fragmented.** The markdown backend splits
+`1. **Admission note** with ... \`billing_codes.pdf\`.` into a list item plus loose text
+fragments, and the chunker drops the fragments: 85 of 239 items in the billing guide.
+Stripping bold and inline-code markers before parsing keeps each item whole. Fenced code
+blocks are left alone.
+
+**Table footnotes never reached a chunk.** The chunker serialises a table as one unit and
+marks its children processed without emitting them. Two footnotes in the diagnostic
+reference carry real clinical rules, so they are re-inserted as text siblings immediately
+after their table.
+
+**Parsing is checked, not trusted.** The same file came back with a different item set
+twice in one session. Every parse must satisfy four conditions: every page in the file
+comes back, every page yields content, the document has at least one heading, and at
+least 80% of the raw text-line words survive into content items. A good parse scores
+0.83 to 0.92; the remainder is page furniture. A failure is retried once, then raised.
+
+The root cause turned out to be a threading race in `docling-parse`, which drops whole
+pages with no error, so the PDF backend runs single-threaded. The check stays as a net.
+
+**Chunk size leaves room for the breadcrumb.** MiniLM truncates silently at 256 tokens.
+The chunker measures the body only, and the heading path is prepended afterwards, so the
+cap is set to 224 and the heading gets the remaining 32.
+
 ## Setup
 
 Requires Python 3.12, [uv](https://docs.astral.sh/uv/), Node 20+ and pnpm.
@@ -242,6 +306,47 @@ in every process.
 
 **Embeddings and reranking run locally; only generation is hosted.** Groq serves the
 language generation for both the document answer and the SQL steps. MiniLM and the cross-encoder are small enough to run on the machine.
+
+## Assumptions
+
+Things the source material left open, decided one way and worth stating plainly.
+
+**A document's folder is its collection, and roles come from config.** `data/clinical/x.pdf`
+is clinical because of where it sits, and its `access_roles` are looked up from the role
+matrix rather than read from the file. A document cannot widen its own access.
+
+**The database is gated by role, the documents by collection.** Access has two axes
+because the two sources are shaped differently. There is no per-column or per-row rule on
+the tables; a role either may query them or may not.
+
+**A refusal is a message, not an error.** It returns HTTP 200 with the same response shape
+as an answer and an empty `sources` list, because the user asked a reasonable question and
+got a reasonable reply. Only a missing or invalid token is a 401.
+
+**Naming a blocked collection is an inference and is worded as one.** The system cannot
+check what is inside a collection the role may not read, so it says "this looks like a
+question for billing documents" rather than asserting the answer is there. Where it knows
+rather than infers, as with the records gate, it states it flatly.
+
+**Answers cite what the model was given, not only what it used.** All three reranked
+chunks are listed, including weak ones. A doctor asking about meropenem sees a
+cardiovascular-drugs chunk that scored −2.10 alongside the two that answered. Hiding low
+scorers would make the citations tidier and less honest about what reached the model.
+
+**Session state lives in the browser for one hour.** The token is held in
+`sessionStorage`, not `localStorage`, so closing the tab ends the session. There is no
+refresh token, which is why the expiry is short: it is exactly how long a stolen token
+keeps working.
+
+**There is no conversation memory.** Each question is answered on its own. Nothing in the
+source material asks for follow-ups, and adding history would mean deciding how a
+permission boundary interacts with a remembered answer, which deserves more thought than
+a convenience feature warrants.
+
+**Data is historical, the clock is not.** Every row is from 2024. Relative dates are
+resolved against the real clock rather than anchored to the data, so "last month" is
+genuinely last month and correctly returns nothing. The reply says which range the records
+actually cover, so an empty result reads as out of range rather than as a finding.
 
 ## Known limitations
 
