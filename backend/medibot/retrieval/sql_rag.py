@@ -32,6 +32,7 @@ from langchain_core.runnables import Runnable, RunnableLambda
 
 from medibot.config import DB_PATH, SQL_RAG_ROLES
 from medibot.retrieval.hybrid_rag import RagResult, get_llm
+from medibot.retrieval.phrasing import RECORDS, refusal
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +132,7 @@ def _sql_writer() -> Runnable:
     """Class-reference helper as-is: default SQLite prompt, top_k = 5 (see module note),
     reads the schema through get_db().get_table_info(), so the value hints ride along.
     clean_sql is piped on the end, so what comes out is one bare SELECT or a ValueError."""
-    chain = create_sql_query_chain(get_llm(), get_db()) | RunnableLambda(clean_sql)
+    chain = create_sql_query_chain(get_llm(), get_db(), k=SQL_ROW_CAP) | RunnableLambda(clean_sql)
     # Retry on a ValueError from clean_sql, meaning the model produced nothing usable.
     # This existed because gpt-oss-20b returned an empty string on roughly a quarter of
     # calls: the helper stops generation at "\nSQLResult:" and that model sometimes began
@@ -148,7 +149,13 @@ def write_sql(question: str) -> str:
 
 
 # --- Step 4: run + explain -------------------------------------------------------------
-LIMIT_NOTE = "Results limited to 5 rows."
+# The helper's prompt asks the model for at most this many rows. It defaulted to 5, which
+# silently cut "which insurers are empanelled" down to 5 of the 8 in the table while the
+# prose still read as a complete list. Raised 2026-09-11: every grouping in this database
+# is well under 50 (8 insurers, 7 departments, 6 categories, 5 campuses), so the cap no
+# longer hides anything, and 50 rows is still small enough to hand to the model.
+SQL_ROW_CAP = 50
+LIMIT_NOTE = f"Results limited to {SQL_ROW_CAP} rows."
 
 ANSWER_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
@@ -169,7 +176,10 @@ def _run(question: str) -> tuple[str, list[tuple], str]:
     chain = ANSWER_PROMPT | get_llm() | StrOutputParser()       # 3b explain
     lo, hi = data_span()
     prose = chain.invoke({"question": question, "sql": sql, "rows": rows, "span_lo": lo, "span_hi": hi})
-    return sql, rows, f"{prose.strip()}\n\n{LIMIT_NOTE}"
+    # Only disclose the cap when it could actually have hidden something. A COUNT returns
+    # one row, so saying "limited to 5 rows" there is noise that competes with the answer.
+    capped = len(rows) >= SQL_ROW_CAP
+    return sql, rows, f"{prose.strip()}\n\n{LIMIT_NOTE}" if capped else prose.strip()
 
 
 def _sources(sql: str) -> list[dict]:
@@ -193,16 +203,16 @@ def sql_rag_chain(question: str) -> str:
 def answer(question: str, role: str) -> RagResult:
     """The SQL branch of /chat. Role gate first; refusal and error are both ordinary replies."""
     if role not in SQL_RAG_ROLES:
-        return RagResult(
-            answer="Analytics questions are not available for your role.",
-            retrieval_type="sql_rag", role=role,
-        )
+        # Same shape as the document refusal: what is closed, then what is open. The
+        # bare "Analytics questions are not available for your role." said only the first
+        # half and left the reader to work out what they could still ask.
+        return RagResult(answer=refusal(role, RECORDS), retrieval_type="sql_rag", role=role, refusal="role")
     try:
         sql, rows, text = _run(question)
     except ValueError:
         return RagResult(
             answer="I could not form a database query from that question. Please rephrase it.",
-            retrieval_type="sql_rag", role=role,
+            retrieval_type="sql_rag", role=role, refusal="no_query",
         )
     logger.info("sql_rag role=%s rows=%d sql=%s", role, len(rows), sql.replace("\n", " "))
     return RagResult(answer=text, sources=_sources(sql), retrieval_type="sql_rag", role=role, sql=sql)

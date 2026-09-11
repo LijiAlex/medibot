@@ -86,7 +86,8 @@ def llm_must_not_run(monkeypatch):
 def test_blocked_question_names_the_collection_and_the_roles_own(llm_must_not_run):
     res = answer("What are the insurance billing codes for an MRI?", "nurse")
     assert res.sources == [] and res.sql is None and res.retrieval_type == "hybrid_rag"
-    assert "as a nurse" in res.answer.lower()
+    # Wording hedged 2026-09-11: naming a collection is a classifier inference.
+    assert res.answer.startswith("This looks like") and "a nurse cannot read" in res.answer
     assert "billing" in res.answer
     for collection in ROLE_COLLECTIONS["nurse"]:
         assert collection in res.answer
@@ -95,7 +96,7 @@ def test_blocked_question_names_the_collection_and_the_roles_own(llm_must_not_ru
 
 def test_blocked_question_for_a_technician_names_clinical(llm_must_not_run):
     res = answer("What is the standard dose of meropenem?", "technician")
-    assert "as a technician" in res.answer.lower() and "clinical" in res.answer
+    assert "a technician cannot read" in res.answer and "clinical" in res.answer
     assert res.sources == []
 
 
@@ -121,3 +122,31 @@ def test_answerable_question_is_unaffected_by_the_gate():
     res = answer("meropenem dose and tier", "doctor")
     assert len(res.sources) == RERANK_TOP_N
     assert "meropenem" in res.answer.lower()
+
+
+def test_a_thin_classifier_margin_does_not_become_an_access_claim(llm_must_not_run):
+    """Measured 2026-09-11: a technician asking about ventilator maintenance scored
+    nursing 0.450 against equipment 0.431. On a gap of 0.019 the reply was choosing
+    between "you are not allowed" and "nothing matched"; refusals that are clearly right
+    had gaps of 0.058 and above."""
+    res = answer("What is the preventive maintenance interval for the ventilators?", "technician")
+    assert res.refusal == "not_found", res.answer
+    assert "cannot read" not in res.answer and "access" not in res.answer.split("you can access")[0]
+
+
+def test_naming_a_collection_is_worded_as_an_inference(llm_must_not_run):
+    """Which collection a question belongs to is a classifier's guess. Stating it flatly
+    claims more than was checked."""
+    res = answer("What are the insurance billing codes for an MRI?", "nurse")
+    assert res.refusal == "role"
+    assert res.answer.startswith("This looks like")
+    assert "billing documents" in res.answer
+
+
+def test_the_role_gate_on_records_is_not_hedged():
+    """Unlike the collection guess, a role having no analytics access is a fact."""
+    from medibot.retrieval.chat import chat
+
+    res = chat("How many tickets are open right now?", "nurse")
+    assert res.refusal == "role"
+    assert res.answer.startswith("As a nurse, you don't have access")

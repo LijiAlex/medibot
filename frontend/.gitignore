@@ -1,0 +1,10 @@
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+
+# Written and re-added by `next dev` on every run (see node_modules/next/dist/
+# server/lib/generate-agent-files.js). Instructions aimed at AI coding agents, not
+# project documentation, so they stay out of the submitted repository.
+AGENTS.md
+CLAUDE.md

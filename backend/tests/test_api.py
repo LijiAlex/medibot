@@ -123,7 +123,9 @@ import os  # noqa: E402
 from medibot.config import SQL_RAG_ROLES  # noqa: E402
 
 needs_llm = pytest.mark.skipif(not os.getenv("GROQ_API_KEY"), reason="GROQ_API_KEY not set")
-SPEC_FIELDS = {"answer", "sources", "retrieval_type", "role", "sql"}
+# The four the spec names (line 168, a minimum), plus what we add: the SQL when there was
+# any, and why there is no answer when there is none.
+SPEC_FIELDS = {"answer", "sources", "retrieval_type", "role", "sql", "refusal"}
 
 
 def auth(role: str) -> dict[str, str]:
@@ -164,7 +166,8 @@ def test_the_role_in_the_body_cannot_override_the_role_in_the_token():
     body = response.json()
     assert body["role"] == "nurse"
     assert body["retrieval_type"] == "sql_rag" and body["sources"] == [] and body["sql"] is None
-    assert "not available" in body["answer"].lower()
+    # The role gate on the records states a fact, so it is not hedged.
+    assert body["answer"].startswith("As a nurse, you don't have access")
 
 
 def test_a_blocked_document_question_returns_the_informative_refusal():
@@ -177,7 +180,7 @@ def test_a_blocked_document_question_returns_the_informative_refusal():
     body = response.json()
     assert set(body) == SPEC_FIELDS
     assert body["role"] == "nurse" and body["sources"] == []
-    assert "don't have access to billing" in body["answer"]
+    assert "billing documents" in body["answer"] and "a nurse cannot read" in body["answer"]
 
 
 @needs_llm
@@ -205,3 +208,51 @@ def test_an_analytical_question_from_a_permitted_role_runs_sql():
 
 def test_a_malformed_chat_body_is_a_validation_error():
     assert client.post("/chat", json={}, headers=auth("doctor")).status_code == 422
+
+
+# --- CORS: the browser calls this from another port --------------------------------
+from medibot.api.app import ALLOWED_ORIGINS  # noqa: E402
+
+
+def test_the_frontend_origin_is_allowed():
+    assert "http://localhost:3000" in ALLOWED_ORIGINS
+    response = client.get("/health", headers={"Origin": "http://localhost:3000"})
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+def test_an_unlisted_origin_gets_no_permission():
+    response = client.get("/health", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_a_provider_rate_limit_is_a_clear_503_not_a_stack_trace(monkeypatch):
+    """Groq caps tokens per minute and per day. Unhandled, that reached the user as a
+    500 with a traceback in the log."""
+    import groq
+    import httpx
+
+    from medibot.api import app as api
+
+    def rate_limited(*args, **kwargs):
+        raise groq.RateLimitError(
+            "rate limit",
+            response=httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com")),
+            body=None,
+        )
+
+    monkeypatch.setattr(api, "chat", rate_limited)
+    response = TestClient(app, raise_server_exceptions=False).post(
+        "/chat", json={"question": "anything"}, headers=auth("admin")
+    )
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert "busy" in detail.lower()
+    assert "org_" not in detail, "the provider's message names the organisation; never pass it through"
+
+
+def test_a_question_has_a_ceiling_as_well_as_a_floor():
+    """Without max_length a 50,000-character body was accepted and forwarded to the
+    model, which is somebody else's bill and a denial-of-service shape."""
+    response = client.post("/chat", json={"question": "x" * 50_000}, headers=auth("admin"))
+    assert response.status_code == 422
+    assert client.post("/chat", json={"question": ""}, headers=auth("admin")).status_code == 422

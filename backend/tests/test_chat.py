@@ -33,7 +33,8 @@ def test_analytical_question_from_a_denied_role_never_reaches_the_database(monke
         assert role not in SQL_RAG_ROLES
         res = chat("Which insurer has the most approved claims?", role)
         assert res.retrieval_type == "sql_rag" and res.sources == [] and res.sql is None
-        assert "not available" in res.answer.lower()
+        # Wording unified 2026-09-11 with the document refusal: closed, then still open.
+        assert "don't have access to the claims and ticket records" in res.answer
 
 
 @needs_llm

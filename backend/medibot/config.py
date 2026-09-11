@@ -87,3 +87,10 @@ RERANK_TOP_N = 3  # what actually reaches the LLM
 # decision boundary is zero. Measured on this corpus, the worst answerable question
 # scored +2.57 and the best blocked one −7.99.
 RELEVANCE_THRESHOLD = 0.0
+
+# How far the classified collection must beat the best one a role may read before the
+# refusal names it. Below this the two are too close to call, and the honest reply is
+# that nothing was found rather than that access was denied. Measured 2026-09-11:
+# refusals that were clearly right had gaps of 0.058 and above; a technician asking about
+# ventilator maintenance produced a gap of 0.019 between nursing and equipment.
+CLASSIFY_MARGIN = 0.04

@@ -19,6 +19,8 @@ import re
 from collections import defaultdict
 from functools import lru_cache
 
+import numpy as np
+
 from semantic_router import Route
 from semantic_router.encoders import HuggingFaceEncoder
 from semantic_router.routers import SemanticRouter
@@ -116,6 +118,29 @@ def get_collection_router() -> SemanticRouter:
 def classify(question: str) -> str | None:
     """Best-matching collection, or None when the question resembles no part of the corpus."""
     return get_collection_router()(question).name
+
+
+def classify_against(question: str, permitted: list[str]) -> tuple[str | None, float]:
+    """The best-matching collection and how far it beat the best one this role may read.
+
+    A refusal that names a collection is an inference, and a thin margin makes it a coin
+    flip. Measured 2026-09-11: "preventive maintenance interval for the ventilators" from
+    a technician scored nursing 0.450 against equipment 0.431, a gap of 0.019, and on that
+    the reply chose between "you are not allowed" and "nothing matched". Refusals that are
+    clearly right had gaps of 0.058 and above.
+    """
+    router = get_collection_router()
+    vector = np.array(router.encoder([question])[0])
+    scores, names = router.index.query(vector=vector, top_k=router.top_k)
+    per: dict[str, list[float]] = defaultdict(list)
+    for score, name in zip(scores, names):
+        per[name].append(float(score))
+    means = {name: sum(values) / len(values) for name, values in per.items()}
+    if not means:
+        return None, 0.0
+    best = max(means, key=means.__getitem__)
+    best_permitted = max((v for c, v in means.items() if c in permitted), default=0.0)
+    return best, means[best] - best_permitted
 
 
 def refit() -> dict[str, float]:

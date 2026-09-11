@@ -21,6 +21,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 
 from medibot.config import (
+    CLASSIFY_MARGIN,
     LLM_MODEL,
     RELEVANCE_THRESHOLD,
     RERANK_MODEL,
@@ -28,7 +29,8 @@ from medibot.config import (
     RETRIEVE_K,
     ROLE_COLLECTIONS,
 )
-from medibot.retrieval.collection_router import classify
+from medibot.retrieval.collection_router import classify_against
+from medibot.retrieval.phrasing import english_list, refusal
 from medibot.vectorstore import get_vectorstore, rbac_filter
 
 
@@ -78,12 +80,28 @@ class RagResult:
     retrieval_type: str = "hybrid_rag"                 # "hybrid_rag" | "sql_rag"
     role: str = ""
     sql: str | None = None                             # SQL branch only; spec line 168 is a minimum
+    # Why there is no answer, when there is none. An empty sources list alone cannot tell
+    # a permission decision from an empty search, and the label on screen must not claim
+    # "nothing matched" about a question that was never searched for.
+    #   "role"      the role may not read that collection, or may not query the records
+    #   "not_found" searched, nothing relevant
+    #   "no_query"  the model produced nothing that cleaned to a SELECT
+    refusal: str | None = None
 
 
 SYSTEM_PROMPT = """You are MediBot, an internal assistant for hospital staff.
 Answer the question using ONLY the numbered context passages below. Be specific:
 quote doses, codes, sizes and steps exactly as written. Cite the passages you used
 as [1], [2], [3]. If the context does not contain the answer, say so and do not guess.
+
+The passages are ordered by relevance, [1] being the most relevant. Use every passage
+that bears on the question, not only the first that matches. Where they set out
+different cases, conditions or staff groups, give all of them: a reader who asks what a
+rule is must not be handed one case as though it were the whole rule.
+
+If the question names a document, treat that as a hint about the topic, never as a
+filter. Answer from whichever passages actually state the rule, whatever file they came
+from, and say where each part came from.
 
 Context:
 {context}"""
@@ -110,20 +128,7 @@ def _sources(ranked: list[tuple[Document, float]]) -> list[dict]:
     ]
 
 
-def _english_list(items: list[str]) -> str:
-    """['a', 'b', 'c'] -> 'a, b and c'."""
-    if len(items) == 1:
-        return items[0]
-    return f"{', '.join(items[:-1])} and {items[-1]}"
-
-
-def _describe(role: str) -> str:
-    """'billing_executive' -> 'a billing executive'."""
-    words = role.replace("_", " ")
-    return f"{'an' if words[0] in 'aeiou' else 'a'} {words}"
-
-
-def _refusal(question: str, role: str) -> str:
+def _refusal(question: str, role: str) -> tuple[str, str]:
     """Why nothing came back, in the words the spec asks for (Component 6).
 
     Two different situations reach here, and conflating them would mean telling a doctor
@@ -136,16 +141,13 @@ def _refusal(question: str, role: str) -> str:
     misclassification changes the wording of a refusal and never causes one.
     """
     permitted = ROLE_COLLECTIONS[role]
-    collection = classify(question)
-    if collection is not None and collection not in permitted:
-        return (
-            f"As {_describe(role)}, you don't have access to {collection} documents. "
-            f"I can only answer questions from the {_english_list(permitted)} collections."
-        )
+    collection, margin = classify_against(question, permitted)
+    if collection is not None and collection not in permitted and margin >= CLASSIFY_MARGIN:
+        return refusal(role, f"{collection} documents", inferred=True), "role"
     return (
         "I couldn't find anything about that in the documents you can access "
-        f"({_english_list(permitted)})."
-    )
+        f"({english_list(ROLE_COLLECTIONS[role])})."
+    ), "not_found"
 
 
 def answer(question: str, role: str) -> RagResult:
@@ -159,8 +161,9 @@ def answer(question: str, role: str) -> RagResult:
     ranked = rerank(question, retrieve(question, role))
     if not ranked or ranked[0][1] < RELEVANCE_THRESHOLD:
         top = ranked[0][1] if ranked else None
-        logger.info("hybrid_rag refused role=%s top1=%s question=%r", role, top, question)
-        return RagResult(answer=_refusal(question, role), retrieval_type="hybrid_rag", role=role)
+        text, why = _refusal(question, role)
+        logger.info("hybrid_rag refused role=%s why=%s top1=%s question=%r", role, why, top, question)
+        return RagResult(answer=text, retrieval_type="hybrid_rag", role=role, refusal=why)
     chain = PROMPT | get_llm() | StrOutputParser()
     text = chain.invoke({"context": _format_context(ranked), "question": question})
     return RagResult(answer=text, sources=_sources(ranked), retrieval_type="hybrid_rag", role=role)

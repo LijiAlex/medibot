@@ -56,3 +56,11 @@ def test_pinned_thresholds_still_fit_the_train_set():
     accuracy = router.evaluate(X=list(questions), y=list(labels))
     print(f"\ntrain-set accuracy at pinned thresholds: {accuracy:.3f}")
     assert accuracy >= 0.9
+
+
+@pytest.mark.parametrize("question,expected", LABELLED, ids=[q[:36] for q, _ in LABELLED])
+def test_a_missing_question_mark_does_not_change_the_branch(question, expected):
+    """Measured 2026-09-11: without normalisation, dropping the mark moved
+    "How many tickets were raised for sensor failures" from SQL to documents."""
+    unpunctuated = question.rstrip("? ")
+    assert is_analytical(unpunctuated) is expected, f"{unpunctuated!r} routed differently"

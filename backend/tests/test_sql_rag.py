@@ -137,7 +137,13 @@ def truth(sql: str):
 
 
 def has_number(text: str, n: int) -> bool:
-    return re.search(rf"(?<![\d.]){n}(?![\d.])", text) is not None
+    """Whole-number match. The trailing guard rejects a following digit, and a decimal
+    point only when a digit follows it, so "with 5." counts and "5.2" does not. The
+    earlier version rejected any number before a full stop, which failed a correct
+    answer ending "Cardiology has the most rejected claims with 5." The model also
+    writes U+202F between words, so normalise before matching."""
+    flat = re.sub(r"[\u202f\u00a0]", " ", text)
+    return re.search(rf"(?<![\d.]){n}(?!\d|\.\d)", flat) is not None
 
 
 # Graded questions: months are explicit (data is 2024, clock is not), values are hinted.
@@ -170,11 +176,23 @@ def test_graded_department_with_most_rejections():
 
 
 @needs_llm
-def test_every_sql_answer_carries_the_limit_note():
-    # 8 insurers exist; the helper's LIMIT 5 drops 3. The note is the agreed disclosure.
+def test_every_group_survives_the_row_cap():
+    """The cap was the library's default of 5, which cut 8 insurers down to 5 while the
+    prose still read as a complete list. Every grouping in this database is well under
+    the raised cap: 8 insurers, 7 departments, 6 categories, 5 campuses."""
     out = sql_rag_chain("How many approved claims does each insurer have?")
-    assert out.rstrip().endswith(LIMIT_NOTE)
-    assert "ICICI Lombard" in out  # top group survives the cap
+    # The model writes U+202F between words, so compare on normalised text.
+    flat = re.sub(r"[\u202f\u00a0]", " ", out)
+    for insurer in ("ICICI Lombard", "United India", "Niva Bupa", "Star Health", "HDFC Ergo"):
+        assert insurer in flat, f"{insurer} missing from: {flat}"
+    assert LIMIT_NOTE not in flat, "nothing was cut, so the cap should not be mentioned"
+
+
+@needs_llm
+def test_a_single_row_answer_does_not_mention_the_cap():
+    # A COUNT returns one row. The cap cut nothing, so saying so would be noise.
+    out = sql_rag_chain("How many claims were escalated in March 2024?")
+    assert LIMIT_NOTE not in out, out
 
 
 @needs_llm
@@ -197,7 +215,7 @@ def test_answer_refuses_roles_without_analytics_and_never_writes_sql(monkeypatch
         res = answer("How many claims were escalated in March 2024?", role)
         assert res.retrieval_type == "sql_rag" and res.sources == [] and res.role == role
         assert res.sql is None
-        assert "not available" in res.answer.lower()
+        assert res.answer.startswith(f"As {'an' if role[0] in 'aeiou' else 'a'} {role.replace('_', ' ')}, you don't have access")
 
 
 def test_answer_turns_unparseable_sql_into_a_reply_not_a_crash(monkeypatch):

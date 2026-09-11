@@ -12,9 +12,14 @@ small enough to read.
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+import groq
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from medibot.api.auth import authenticate, create_token, decode_token
@@ -26,6 +31,35 @@ app = FastAPI(
     description="Role-aware assistant over MediAssist's documents and operational database.",
     version="0.1.0",
 )
+
+
+# The frontend is served from a different port, which makes every call it sends a
+# cross-origin request that the browser blocks unless we say otherwise. An explicit list
+# rather than "*": nothing here needs to be callable from an arbitrary page, and the
+# tokens travel in an Authorization header, so widening this would buy nothing.
+logger = logging.getLogger(__name__)
+
+ALLOWED_ORIGINS = os.getenv("MEDIBOT_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in ALLOWED_ORIGINS if origin.strip()],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
+
+@app.exception_handler(groq.RateLimitError)
+def rate_limited(request: Request, error: groq.RateLimitError) -> JSONResponse:
+    """The model provider caps tokens per minute and per day. Left unhandled this
+    surfaced as a 500 with a stack trace in the log and a vague message to the user.
+    503 is the honest status, and the message says what to do rather than what broke;
+    the provider's own text is not passed through, since it names the organisation."""
+    logger.warning("groq rate limit on %s", request.url.path)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "MediBot is busy right now. Wait a few seconds and ask again."},
+    )
 
 
 @app.get("/health")
@@ -89,7 +123,9 @@ def current_role(authorization: Annotated[str | None, Header()] = None) -> str:
 
 
 class ChatRequest(BaseModel):
-    question: str = Field(min_length=1)
+    # A ceiling as well as a floor. Without one, a 50,000-character body was accepted and
+    # forwarded to the model, which is somebody else's bill and a denial-of-service shape.
+    question: str = Field(min_length=1, max_length=1000)
     # No role field. One appearing in the body is ignored, which a test pins.
 
 
@@ -107,6 +143,7 @@ class ChatResponse(BaseModel):
     retrieval_type: str
     role: str
     sql: str | None = None
+    refusal: str | None = None
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -124,4 +161,5 @@ def chat_endpoint(request: ChatRequest, role: Annotated[str, Depends(current_rol
         retrieval_type=result.retrieval_type,
         role=result.role,
         sql=result.sql,
+        refusal=result.refusal,
     )

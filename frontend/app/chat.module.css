@@ -1,0 +1,176 @@
+.shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 16rem minmax(0, 1fr);
+}
+
+/* --- permission rail ------------------------------------------------------------- */
+.rail {
+  border-right: 1px solid var(--rule);
+  padding: var(--gap-4) var(--gap-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-3);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.who { display: grid; gap: 0.15rem; }
+.who strong { font-size: var(--step-1); font-weight: 600; }
+.who span { color: var(--ink-soft); font-size: var(--step--1); }
+
+.railGroup { display: grid; gap: var(--gap-1); }
+.railGroup h2 { font-size: var(--step--1); font-weight: 400; color: var(--ink-soft); margin: 0; }
+
+.reads { display: grid; gap: var(--gap-1); }
+
+.chip { display: flex; align-items: baseline; gap: 0.45rem; font-size: var(--step--1); font-weight: 500; }
+.swatch { display: inline-block; width: 9px; height: 9px; flex: none; transform: translateY(-1px); }
+.chip em { font-style: normal; font-weight: 400; color: var(--ink-soft); }
+
+.denied { color: var(--ink-soft); font-size: var(--step--1); margin: 0; }
+
+/* Outlined rather than filled: a source, but not one of the five collections, so it
+   keeps the row alignment without joining the colour system. */
+.recordsSwatch { background: none; border: 1px solid var(--ink-soft); }
+
+.signOut {
+  margin-top: auto;
+  justify-self: start;
+  border: 1px solid var(--rule);
+  background: none;
+  padding: 0.35rem 0.8rem;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: var(--step--1);
+}
+.signOut:hover { border-color: var(--ink); }
+
+/* --- conversation ---------------------------------------------------------------- */
+.main { display: flex; flex-direction: column; min-height: 100vh; }
+
+.thread {
+  flex: 1;
+  padding: var(--gap-4) var(--gap-4) var(--gap-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-5);
+  max-width: 46rem;
+  width: 100%;
+}
+
+.empty { color: var(--ink-soft); max-width: 44ch; }
+.empty h1 { font-size: var(--step-3); color: var(--ink); margin-bottom: var(--gap-2); }
+.tryList { list-style: none; padding: 0; margin: var(--gap-3) 0 0; display: grid; gap: var(--gap-1); }
+.try {
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--rule);
+  text-underline-offset: 3px;
+}
+.try:hover { text-decoration-color: var(--ink); }
+
+.turn { display: grid; gap: var(--gap-2); }
+
+.question {
+  font-size: var(--step-1);
+  font-weight: 500;
+  border-left: 3px solid var(--rule);
+  padding-left: var(--gap-2);
+  margin: 0;
+}
+
+.answer {
+  font-family: var(--serif);
+  font-size: var(--step-1);
+  line-height: 1.6;
+  margin: 0;
+  max-width: 62ch;
+  white-space: pre-wrap;
+}
+
+.refusal {
+  font-family: var(--sans);
+  font-size: var(--step-0);
+  border-left: 3px solid var(--ink);
+  padding-left: var(--gap-2);
+  max-width: 52ch;
+  line-height: 1.5;
+}
+
+.marker { font-size: var(--step--1); color: var(--ink-soft); margin: 0; }
+
+.caveat { font-size: var(--step--1); color: var(--ink-soft); margin: 0; }
+
+.progress { font-size: var(--step--1); color: var(--ink-soft); margin: 0; }
+.progress::after {
+  content: "…";
+  animation: ellipsis 1.4s steps(4, end) infinite;
+  display: inline-block;
+  width: 1em;
+  overflow: hidden;
+  vertical-align: bottom;
+}
+@keyframes ellipsis { from { width: 0; } to { width: 1em; } }
+
+.cite { border-collapse: collapse; font-size: var(--step--1); }
+.cite caption { text-align: left; color: var(--ink-soft); padding-bottom: var(--gap-1); }
+.cite td { padding: 0.2rem var(--gap-2) 0.2rem 0; vertical-align: baseline; }
+.cite td:first-child { width: 9px; padding-right: var(--gap-1); }
+.cite .collection { color: var(--ink-soft); white-space: nowrap; }
+.cite .doc { color: var(--ink); }
+.cite .section { color: var(--ink-soft); }
+
+.sql { font-size: var(--step--1); color: var(--ink-soft); }
+.sql summary { cursor: pointer; }
+.sql pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  padding: var(--gap-2);
+  overflow-x: auto;
+  margin: var(--gap-1) 0 0;
+  white-space: pre-wrap;
+}
+
+/* --- ask ------------------------------------------------------------------------- */
+.ask {
+  position: sticky;
+  bottom: 0;
+  background: var(--paper);
+  border-top: 1px solid var(--rule);
+  padding: var(--gap-3) var(--gap-4);
+}
+.askInner { display: flex; gap: var(--gap-2); max-width: 46rem; }
+.askInner input {
+  flex: 1;
+  border: 1px solid var(--rule);
+  background: var(--paper-raised);
+  padding: 0.6rem 0.7rem;
+  border-radius: 2px;
+}
+.askInner input:focus-visible { border-color: var(--ink); }
+.askInner button {
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper-raised);
+  padding: 0.6rem 1.4rem;
+  border-radius: 2px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.askInner button:disabled { opacity: 0.45; cursor: default; }
+
+.failed { color: var(--ink); border-left: 3px solid var(--ink); padding-left: var(--gap-2); }
+
+@media (max-width: 54rem) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .rail { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--rule); }
+}
