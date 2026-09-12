@@ -83,10 +83,19 @@ RETRIEVE_K = 10   # broad hybrid candidate set
 RERANK_TOP_N = 3  # what actually reaches the LLM
 
 # Below this top-1 rerank score, nothing retrieved is relevant and the LLM is not called.
-# Not a tuned number: the ms-marco cross-encoder emits a relevance logit whose own
-# decision boundary is zero. Measured on this corpus, the worst answerable question
-# scored +2.57 and the best blocked one −7.99.
-RELEVANCE_THRESHOLD = 0.0
+#
+# Was 0.0, argued from the ms-marco cross-encoder's own decision boundary and checked
+# against seven questions. That sample had a hole: a doctor asking about ECG
+# interpretation flags scored -1.11 and was refused an answer that had been retrieved at
+# rank 1. Measured again over 16 answerable and 8 blocked questions on 2026-09-12:
+#
+#   answerable   worst -1.11, then +0.27, +1.74, +2.11 ... +9.26
+#   blocked      best  -7.99, then -9.46, -10.22 ... -11.07
+#
+# The two groups are 6.88 apart, so this sits in the middle of that gap rather than on
+# the model's nominal boundary. It is an empirical number and tests/test_hybrid_rag.py
+# pins the separation so it cannot drift back into the answerable range.
+RELEVANCE_THRESHOLD = -4.0
 
 # How far the classified collection must beat the best one a role may read before the
 # refusal names it. Below this the two are too close to call, and the honest reply is

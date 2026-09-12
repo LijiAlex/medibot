@@ -113,8 +113,11 @@ def test_unclassifiable_question_also_says_not_found(llm_must_not_run):
     assert "couldn't find" in res.answer.lower() and res.sources == []
 
 
-def test_gate_threshold_is_the_cross_encoder_decision_boundary():
-    assert RELEVANCE_THRESHOLD == 0.0
+def test_gate_threshold_is_an_empirical_midpoint_not_a_nominal_boundary():
+    """Superseded 2026-09-12. This asserted 0.0, argued from the cross-encoder's nominal
+    decision boundary; measurement put a genuine answer at -1.11. The separation is what
+    matters and test_the_gate_sits_between_the_two_groups pins it."""
+    assert RELEVANCE_THRESHOLD < 0.0
 
 
 @needs_llm
@@ -150,3 +153,27 @@ def test_the_role_gate_on_records_is_not_hedged():
     res = chat("How many tickets are open right now?", "nurse")
     assert res.refusal == "role"
     assert res.answer.startswith("As a nurse, you don't have access")
+
+
+# The gate must sit between the two groups, not inside either. Measured 2026-09-12 over
+# 16 answerable and 8 blocked questions; these are the closest case from each side.
+CLOSEST_ANSWERABLE = ("doctor", "What are the ECG interpretation flags?", -1.11)
+CLOSEST_BLOCKED = ("nurse", "What are the insurance billing codes for an MRI?", -7.99)
+
+
+def test_the_gate_sits_between_the_two_groups():
+    """A threshold of 0 was inside the answerable range and refused a doctor an answer
+    that had been retrieved at rank 1."""
+    for role, question, expected in (CLOSEST_ANSWERABLE, CLOSEST_BLOCKED):
+        top = rerank(question, retrieve(question, role))[0][1]
+        assert abs(top - expected) < 0.5, f"{question!r} scored {top:.2f}, expected about {expected}"
+    assert CLOSEST_BLOCKED[2] < RELEVANCE_THRESHOLD < CLOSEST_ANSWERABLE[2], (
+        f"threshold {RELEVANCE_THRESHOLD} must separate {CLOSEST_BLOCKED[2]} from {CLOSEST_ANSWERABLE[2]}"
+    )
+
+
+@needs_llm
+def test_the_question_the_old_threshold_refused_is_now_answered():
+    res = answer("What are the ECG interpretation flags?", "doctor")
+    assert res.refusal is None, res.answer
+    assert res.sources[0]["source_document"] == "diagnostic_reference.pdf"
