@@ -159,22 +159,48 @@ def write_sql(question: str) -> str:
 SQL_ROW_CAP = 50
 LIMIT_NOTE = f"Results limited to {SQL_ROW_CAP} rows."
 
+# The two money columns. MediAssist bills in rupees: the documents use the sign 22 times
+# ("Package (₹) = ₹52,000") and write "INR" three times, and no other currency appears.
+MONEY_COLUMNS = ("claimed_amount", "approved_amount")
+CURRENCY = "₹"
+
 ANSWER_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
      "You are MediBot, answering an analytics question for hospital staff.\n"
      "You are given the question, the SQL that was run, and the rows it returned.\n"
      "Answer in one or two plain sentences using only those rows. Use the numbers exactly as\n"
      "they appear in the rows, without quotation marks.\n"
+     f"Amounts are in Indian rupees. Write them with a {CURRENCY} sign and two decimal places,\n"
+     f"for example {CURRENCY}55,515.91, and never as a bare number.\n"
      "If the result is empty or every count is 0, say that no matching records were found "
      "and state that the records cover {span_lo} to {span_hi}. Do not show the SQL."),
     ("human", "Question: {question}\nSQL: {sql}\nResult rows: {rows}"),
 ])
 
 
+def _round_money(rows: list) -> list:
+    """Two decimal places on anything that came back as a real number.
+
+    SQLite hands back the full float, so an average arrived as 55515.90909090909 and the
+    model repeated it verbatim, as instructed. Rounding here rather than only asking the
+    model keeps the figure right even if it ignores the instruction. The two money columns
+    are the only REALs in this schema, and rounding an AVG is wanted anyway.
+    """
+    rounded = []
+    for row in rows:
+        if hasattr(row, "items"):
+            rounded.append({k: round(v, 2) if isinstance(v, float) else v for k, v in row.items()})
+        elif isinstance(row, (list, tuple)):
+            rounded.append(tuple(round(v, 2) if isinstance(v, float) else v for v in row))
+        else:
+            rounded.append(row)
+    return rounded
+
+
 def _run(question: str) -> tuple[str, list[tuple], str]:
     """The three spec steps, returning what each produced: (sql, rows, prose)."""
     sql = write_sql(question)                                   # 1 translate + 2 clean
-    rows = get_db()._execute(sql)                               # 3a execute (read-only handle)
+    rows = _round_money(get_db()._execute(sql))                 # 3a execute (read-only handle)
     chain = ANSWER_PROMPT | get_llm() | StrOutputParser()       # 3b explain
     lo, hi = data_span()
     prose = chain.invoke({"question": question, "sql": sql, "rows": rows, "span_lo": lo, "span_hi": hi})

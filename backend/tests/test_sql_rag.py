@@ -245,3 +245,26 @@ def test_relative_date_question_is_answered_against_the_real_clock_and_explains_
     assert res.sources[0]["collection"] == "sql"
     assert "2024" in res.answer, res.answer                    # span disclosed
     assert "date('now'" in res.sql or "2026" in res.sql
+
+
+# --- Money ---------------------------------------------------------------------------
+from medibot.retrieval.sql_rag import CURRENCY, _round_money  # noqa: E402
+
+
+def test_money_is_rounded_before_it_reaches_the_model():
+    """SQLite returns the full float, so an average arrived as 55515.90909090909 and the
+    model repeated it verbatim, as the prompt told it to. Rounding here means the figure
+    is right even if the model ignores the instruction."""
+    assert _round_money([{"avg": 55515.90909090909, "n": 12}]) == [{"avg": 55515.91, "n": 12}]
+    assert _round_money([(55515.90909090909, "x")]) == [(55515.91, "x")]
+    assert _round_money([{"c": 3}]) == [{"c": 3}], "integers are left alone"
+
+
+@needs_llm
+def test_an_amount_is_written_as_rupees_with_two_decimals():
+    """MediAssist bills in rupees: the documents use the sign 22 times and no other
+    currency appears anywhere in the corpus."""
+    out = sql_rag_chain("What is the average approved amount on a claim?")
+    flat = re.sub(r"[  ]", " ", out)
+    assert CURRENCY in flat, f"no currency sign in: {flat}"
+    assert not re.search(r"\d\.\d{3,}", flat), f"unrounded figure in: {flat}"
