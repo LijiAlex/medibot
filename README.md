@@ -236,11 +236,28 @@ citations from `drug_formulary.pdf`.
 ![A technician asking for a meropenem dose. The reply names clinical as the collection
 a technician cannot read and offers general and equipment instead.](docs/rbac-technician-clinical.png)
 
-The gap is what makes this checkable. Questions a role *can* answer score positively:
-a nurse asking about cannula sizing scores **+5.37**, a billing executive asking about
-cashless claims **+9.26**. Every blocked question in testing scored below **−7.9**. The
-threshold sits at zero, which is the cross-encoder's own decision boundary rather than a
-number we tuned.
+The gap is what makes this checkable, and it was measured rather than assumed. Across
+sixteen questions a role can answer and eight it cannot:
+
+| | worst | typical | best |
+|---|---|---|---|
+| answerable | −1.11 | +3 to +6 | +9.26 |
+| blocked or absent | −11.07 | around −10 | −7.99 |
+
+The gate sits at **−4.0**, in the middle of that 6.88-wide gap.
+
+It was set to zero at first, argued from the cross-encoder's nominal decision boundary
+and checked against seven questions. That sample had a hole. A doctor asking about ECG
+interpretation flags scored −1.11 and was refused an answer that had been retrieved at
+rank one, because zero sits inside the answerable range rather than between the two
+groups. The number is empirical now, and the code says so; a test pins the closest case
+from each side so the gate cannot drift back.
+
+Lowering it raises the opposite risk, that weaker chunks reach the model and get answered
+from anyway. Four topics this corpus does not contain, each asked by a role permitted to
+read where they would live, were all correctly refused: organ transplantation asked by a
+doctor, neonatal resuscitation by a nurse, servicing an MRI scanner by a technician, and
+a GST rate by a billing executive.
 
 ## Hybrid retrieval against dense-only
 
@@ -353,6 +370,15 @@ printed on the sign-in screen, but it is not behind authentication.
 defaults to `http://localhost:3000` and limits methods to GET and POST. Serving the
 frontend from anywhere else means setting it, or the browser blocks every call with no
 hint as to why.
+
+**Amounts are shown in rupees to two decimal places.** MediAssist bills in rupees: the
+documents use the sign twenty-two times and no other currency appears. SQLite returns the
+full float, so an average arrived as `55515.90909090909`; rows are rounded before they
+reach the model as well as the model being told the convention, because the prompt
+otherwise tells it to reproduce numbers exactly, which is right for doses and codes.
+Large amounts are written `₹228,900.00` rather than in the lakh grouping the documents
+use, since teaching the model Indian digit conventions is more fragile than the
+inconsistency is costly.
 
 **A question is capped at 1,000 characters.** A body without a ceiling was accepted and
 forwarded to the model, which is somebody else's bill.
