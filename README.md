@@ -114,8 +114,10 @@ comes back, every page yields content, the document has at least one heading, an
 least 80% of the raw text-line words survive into content items. A good parse scores
 0.83 to 0.92; the remainder is page furniture. A failure is retried once, then raised.
 
-The root cause turned out to be a threading race in `docling-parse`, which drops whole
-pages with no error, so the PDF backend runs single-threaded. The check stays as a net.
+The likely cause is a threading race in `docling-parse`, which drops whole pages with no
+error. Running the PDF backend single-threaded made the flakiness stop, which is evidence
+but not proof: the upstream fix is reported rather than confirmed in the issue thread or
+the release notes. The check stays as a net either way.
 
 **Chunk size leaves room for the breadcrumb.** MiniLM truncates silently at 256 tokens.
 The chunker measures the body only, and the heading path is prepended afterwards, so the
@@ -136,8 +138,12 @@ downloading.
 ```bash
 cd backend
 uv sync
-uv run python -m medibot.ingestion.ingest
+uv run python -m medibot.ingestion.ingest                          # all twelve
+uv run python -m medibot.ingestion.ingest --only drug_formulary.pdf  # just one
 ```
+
+Re-running is safe. Each document's old points are deleted by source before the new ones
+are written, so a document that now yields fewer chunks leaves nothing stale behind.
 
 **3. Run the backend.**
 
@@ -261,7 +267,8 @@ place, on exactly the kind of term that pure semantic search is weakest at.
 
 ```
 data/       documents and mediassist.db exactly as provided, never written to
-store/      what ingestion produces and the app reads; qdrant/ holds 283 points
+store/      what ingestion produces and the app reads; qdrant/ is the whole of it,
+              283 points, gitignored and rebuilt by the ingestion command
               general 78 · clinical 73 · billing 56 · nursing 45 · equipment 31
 backend/    Python 3.12 with uv
               medibot/ingestion/   parse, chunk, embed, index
@@ -296,7 +303,8 @@ returned an empty string on about a quarter of calls: its prompt stops generatio
 the same incompatibility and was closed as not planned. Two fixes were tested and failed:
 the widely reported Groq empty-content bug shows `finish_reason: length` while ours showed
 `stop`, and the class notebook's `reasoning_format="parsed"` made it worse, 5 of 6 empty
-against 1 of 6. The 120b model was usable 5 of 5 with the stop token in place.
+against 1 of 6. The 120b model was usable 5 of 5 with the stop token in place. The retry that was added
+for the 20b model is still there, costing nothing when the first attempt succeeds.
 
 **A hand-picked semantic router over an LLM classifier.** Routing is a nearest-neighbour
 match against utterance sets using the MiniLM already loaded for retrieval, so it costs
@@ -315,6 +323,10 @@ Things the source material left open, decided one way and worth stating plainly.
 is clinical because of where it sits, and its `access_roles` are looked up from the role
 matrix rather than read from the file. A document cannot widen its own access.
 
+**`chunk_type` is never `heading`.** The metadata contract lists four values and three
+occur. Under a hierarchical chunker a heading is never a chunk body; it sets the path the
+chunk sits under, which is what the breadcrumb carries.
+
 **The database is gated by role, the documents by collection.** Access has two axes
 because the two sources are shaped differently. There is no per-column or per-row rule on
 the tables; a role either may query them or may not.
@@ -332,6 +344,18 @@ rather than infers, as with the records gate, it states it flatly.
 chunks are listed, including weak ones. A doctor asking about meropenem sees a
 cardiovascular-drugs chunk that scored −2.10 alongside the two that answered. Hiding low
 scorers would make the citations tidier and less honest about what reached the model.
+
+**`/collections/{role}` needs no token.** The role is in the path, as specified, so any
+caller can read back the access matrix role by role. It exposes only the mapping already
+printed on the sign-in screen, but it is not behind authentication.
+
+**The browser is only allowed to call the API from one origin.** `MEDIBOT_ALLOWED_ORIGINS`
+defaults to `http://localhost:3000` and limits methods to GET and POST. Serving the
+frontend from anywhere else means setting it, or the browser blocks every call with no
+hint as to why.
+
+**A question is capped at 1,000 characters.** A body without a ceiling was accepted and
+forwarded to the model, which is somebody else's bill.
 
 **Session state lives in the browser for one hour.** The token is held in
 `sessionStorage`, not `localStorage`, so closing the tab ends the session. There is no
@@ -375,6 +399,8 @@ occasional "I could not form a database query". Spaced out, twelve consecutive r
 same question succeeded twelve times. The API turns a rate limit into a 503 with a plain
 message rather than a stack trace.
 
-**Answers are capped at 50 rows.** Every grouping in this database is well under that, so
-nothing is currently hidden, and the cap is disclosed in the answer when a result actually
-reaches it.
+**The 50-row cap is asked of the model, not enforced by the code.** It fills the `top_k`
+placeholder in the SQL-writing prompt, so the model is instructed to add a `LIMIT`.
+Nothing truncates the result afterwards, and a query written without one would return
+everything. Every grouping in this database is well under fifty, so nothing is currently
+hidden, and the answer discloses the cap when a result does come back at it.

@@ -51,13 +51,18 @@ const tidy = (text: string) =>
     .replace(/[\u202f\u00a0]/g, " ");
 
 /* The SQL branch appends a note about the row cap. It is a caveat about how the query
- * ran, not part of the finding, so it is lifted out of the answer and set quietly. */
-const ROW_CAP = "Results limited to 5 rows.";
+ * ran, not part of the finding, so it is lifted out of the answer and set quietly.
+ *
+ * Matched by shape rather than by an exact string: the cap lives in the backend
+ * (SQL_ROW_CAP) and a literal copy here silently stopped matching when it changed from 5
+ * to 50, so the caveat was rendered inside the answer instead of below it. */
+const ROW_CAP = /\n*Results limited to \d+ rows\.$/;
 
 function split(answer: string): { body: string; caveat: string | null } {
   const trimmed = answer.trimEnd();
-  return trimmed.endsWith(ROW_CAP)
-    ? { body: trimmed.slice(0, -ROW_CAP.length).trimEnd(), caveat: ROW_CAP }
+  const found = trimmed.match(ROW_CAP);
+  return found
+    ? { body: trimmed.slice(0, found.index).trimEnd(), caveat: found[0].trim() }
     : { body: trimmed, caveat: null };
 }
 

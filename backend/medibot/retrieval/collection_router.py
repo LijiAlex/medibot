@@ -128,6 +128,11 @@ def classify_against(question: str, permitted: list[str]) -> tuple[str | None, f
     a technician scored nursing 0.450 against equipment 0.431, a gap of 0.019, and on that
     the reply chose between "you are not allowed" and "nothing matched". Refusals that are
     clearly right had gaps of 0.058 and above.
+
+    The route must also clear its own fitted threshold. Without that check the thresholds
+    were live only in classify(), which the refusal path never calls, so a question that
+    resembled nothing in the corpus could still be named a collection whenever its margin
+    happened to exceed CLASSIFY_MARGIN.
     """
     router = get_collection_router()
     vector = np.array(router.encoder([question])[0])
@@ -139,6 +144,8 @@ def classify_against(question: str, permitted: list[str]) -> tuple[str | None, f
     if not means:
         return None, 0.0
     best = max(means, key=means.__getitem__)
+    if means[best] < FITTED_THRESHOLDS.get(best, 0.0):
+        return None, 0.0
     best_permitted = max((v for c, v in means.items() if c in permitted), default=0.0)
     return best, means[best] - best_permitted
 

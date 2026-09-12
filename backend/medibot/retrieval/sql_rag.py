@@ -11,8 +11,10 @@
 The SQL itself is written by LangChain's create_sql_query_chain (as in the class
 reference). It reads the schema through db.get_table_info(), so the value hints are
 attached to the SQLDatabase via custom_table_info and the helper stays untouched.
-Its default prompt asks for at most top_k = 5 rows (LIMIT 5), so every SQL answer
-carries the note "Results limited to 5 rows." (user decision, 2026-09-09).
+Its prompt asks the model for at most SQL_ROW_CAP rows. That is a request, not a limit
+this code enforces: nothing truncates the result afterwards, so a query written without a
+LIMIT returns everything. The note is added only when a result comes back at the cap,
+which is the case where rows may be missing.
 
 Read-only is enforced at the driver (SQLite `mode=ro`), not by trusting the LLM's SQL.
 """

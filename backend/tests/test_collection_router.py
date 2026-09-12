@@ -56,3 +56,14 @@ def test_pinned_thresholds_still_fit_the_train_set():
     accuracy = router.evaluate(X=list(questions), y=list(labels))
     print(f"\ntrain-set accuracy at pinned thresholds: {accuracy:.3f}")
     assert accuracy >= 0.8
+
+
+def test_a_question_resembling_nothing_names_no_collection():
+    """classify_against is the live path; classify() is only called from tests. Without
+    the threshold check the fitted numbers were dead in production, and a question that
+    matched no collection could still be named one whenever its margin cleared the bar."""
+    from medibot.retrieval.collection_router import classify_against
+
+    for nonsense in ("hello there", "what is the weather today", "tell me a joke"):
+        collection, margin = classify_against(nonsense, ["general", "nursing"])
+        assert collection is None, f"{nonsense!r} was named {collection} with margin {margin:.3f}"
