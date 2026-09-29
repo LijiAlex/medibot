@@ -182,6 +182,16 @@ Runs are grouped under the project `medibot` unless `LANGSMITH_PROJECT` says oth
 Nothing in the code switches this on, so installing the package does not start sending
 anybody's questions to a hosted service.
 
+Each span also records what it decided: which branch ran, the rank-1 rerank score, whether
+the relevance gate fired and why, tagged `answered` or `refused`. That makes a question
+like *"every request the gate refused whose top passage still scored above −2"* a filter
+rather than a script.
+
+**What a trace contains.** Reconstructing an answer means recording what produced it, so a
+trace holds the question as asked and the full text of the passages retrieved for it. With
+tracing on, that document content lives in your LangSmith project. It is the point of the
+feature, and it is the reason the feature is off by default.
+
 ### Demo accounts
 
 Every password is the username followed by `-demo`, so `nurse.priya` signs in with

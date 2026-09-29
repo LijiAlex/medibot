@@ -18,6 +18,7 @@ from typing import Annotated
 
 import groq
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from langsmith.run_helpers import tracing_context
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -122,6 +123,22 @@ def current_role(authorization: Annotated[str | None, Header()] = None) -> str:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+# The headers LangSmith uses to carry a caller's trace context. A request arriving with
+# them is part of somebody else's trace, and MediBot's spans belong underneath it rather
+# than in a separate tree of their own.
+TRACE_HEADERS = ("langsmith-trace", "baggage")
+
+
+def trace_parent(request: Request) -> dict[str, str] | None:
+    """The caller's trace context, or None when the request carries none.
+
+    Returning None rather than an empty mapping matters: an empty parent would start a
+    fresh trace, which is what happens anyway and is not worth a context manager.
+    """
+    headers = {name: request.headers[name] for name in TRACE_HEADERS if name in request.headers}
+    return headers or None
+
+
 class ChatRequest(BaseModel):
     # A ceiling as well as a floor. Without one, a 50,000-character body was accepted and
     # forwarded to the model, which is somebody else's bill and a denial-of-service shape.
@@ -170,14 +187,23 @@ class ChatResponse(BaseModel):
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat_endpoint(request: ChatRequest, role: Annotated[str, Depends(current_role)]) -> ChatResponse:
+def chat_endpoint(
+    request: ChatRequest,
+    http_request: Request,
+    role: Annotated[str, Depends(current_role)],
+) -> ChatResponse:
     """Hands the question to the retrieval layer and returns what comes back.
 
     Deliberately thin. The routing, the role gate, the RBAC filter and the score gate all
     live in medibot.retrieval and are covered by their own tests; duplicating any of that
     logic here would give it a second place to drift.
     """
-    result = chat(request.question, role)
+    parent = trace_parent(http_request)
+    if parent is None:
+        result = chat(request.question, role)
+    else:
+        with tracing_context(parent=parent):
+            result = chat(request.question, role)
     return ChatResponse(
         answer=result.answer,
         sources=[Source(**source) for source in result.sources],

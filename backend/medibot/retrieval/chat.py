@@ -16,12 +16,15 @@ only what happens next depends on who is asking. Anything the router cannot plac
 
 from __future__ import annotations
 
+from langsmith import traceable
+
 from medibot.retrieval.hybrid_rag import RagResult
 from medibot.retrieval.hybrid_rag import answer as hybrid_answer
 from medibot.retrieval.router import is_analytical
 from medibot.retrieval.sql_rag import answer as sql_answer
 
 
+@traceable(run_type="chain", name="chat")
 def chat(question: str, role: str) -> RagResult:
     if is_analytical(question):
         return sql_answer(question, role)

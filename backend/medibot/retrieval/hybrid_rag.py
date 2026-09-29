@@ -19,6 +19,8 @@ from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
+from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 
 from medibot.config import (
     CLASSIFY_MARGIN,
@@ -37,6 +39,7 @@ from medibot.vectorstore import get_vectorstore, rbac_filter
 logger = logging.getLogger(__name__)
 
 
+@traceable(run_type="retriever", name="hybrid retrieve")
 def retrieve(question: str, role: str, k: int = RETRIEVE_K) -> list[Document]:
     """Broad candidate set for one question, restricted to what the role may read.
 
@@ -54,6 +57,7 @@ def get_reranker() -> HuggingFaceCrossEncoder:
     return HuggingFaceCrossEncoder(model_name=RERANK_MODEL)
 
 
+@traceable(run_type="tool", name="cross-encoder rerank")
 def rerank(question: str, docs: list[Document], top_n: int = RERANK_TOP_N) -> list[tuple[Document, float]]:
     """Second, slower scoring pass: keep the top_n chunks most relevant to the question.
 
@@ -172,6 +176,34 @@ def _refusal(question: str, role: str) -> tuple[str, str]:
     ), "not_found"
 
 
+def _record(role: str, ranked: list[tuple[Document, float]], refusal: str | None) -> None:
+    """Attach the facts behind this answer to the current span, if one is open.
+
+    The trace already contains all of this — the scores are in `rerank`'s output — but
+    buried in a span body, where it can be read and not filtered on. Lifting it to
+    metadata makes "every request where the gate fired but the top score was above -2" a
+    query rather than a script.
+
+    A no-op when tracing is off, since there is no span to attach to.
+    """
+    run = get_current_run_tree()
+    if run is None:
+        return
+    top = float(ranked[0][1]) if ranked else None
+    run.metadata.update(
+        {
+            "role": role,
+            "branch": "hybrid_rag",
+            "rank1_score": round(top, 4) if top is not None else None,
+            "gate_fired": refusal is not None,
+            "refusal_reason": refusal,
+            "retrieved": len(ranked),
+        }
+    )
+    run.tags.append("refused" if refusal else "answered")
+
+
+@traceable(run_type="chain", name="hybrid rag")
 def answer(question: str, role: str) -> RagResult:
     """retrieve -> rerank -> LLM. Only the reranked top_n reaches the prompt (spec, Component 3).
 
@@ -185,9 +217,11 @@ def answer(question: str, role: str) -> RagResult:
         top = ranked[0][1] if ranked else None
         text, why = _refusal(question, role)
         logger.info("hybrid_rag refused role=%s why=%s top1=%s question=%r", role, why, top, question)
+        _record(role, ranked, why)
         return RagResult(answer=text, retrieval_type="hybrid_rag", role=role, refusal=why)
     chain = PROMPT | get_llm() | StrOutputParser()
     text = chain.invoke({"context": _format_context(ranked), "question": question})
+    _record(role, ranked, None)
     return RagResult(
         answer=text,
         sources=_sources(ranked),

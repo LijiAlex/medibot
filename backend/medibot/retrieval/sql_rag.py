@@ -31,6 +31,8 @@ from langchain_community.utilities import SQLDatabase
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable, RunnableLambda
+from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 
 from medibot.config import DB_PATH, SQL_RAG_ROLES
 from medibot.retrieval.hybrid_rag import RagResult, get_llm
@@ -145,6 +147,7 @@ def _sql_writer() -> Runnable:
     return chain.with_retry(retry_if_exception_type=(ValueError,), stop_after_attempt=4, wait_exponential_jitter=False)
 
 
+@traceable(run_type="chain", name="write sql")
 def write_sql(question: str) -> str:
     """Spec step 1 + 2: LLM translates the question, output is cleaned to bare SQL."""
     return _sql_writer().invoke({"question": question})
@@ -228,20 +231,34 @@ def sql_rag_chain(question: str) -> str:
     return _run(question)[2]
 
 
+@traceable(run_type="chain", name="sql rag")
 def answer(question: str, role: str) -> RagResult:
     """The SQL branch of /chat. Role gate first; refusal and error are both ordinary replies."""
+    run = get_current_run_tree()
+    if run is not None:
+        run.metadata.update({"role": role, "branch": "sql_rag"})
+
     if role not in SQL_RAG_ROLES:
         # Same shape as the document refusal: what is closed, then what is open. The
         # bare "Analytics questions are not available for your role." said only the first
         # half and left the reader to work out what they could still ask.
+        if run is not None:
+            run.metadata.update({"gate_fired": True, "refusal_reason": "role"})
+            run.tags.append("refused")
         return RagResult(answer=refusal(role, RECORDS), retrieval_type="sql_rag", role=role, refusal="role")
     try:
         sql, rows, text = _run(question)
     except ValueError:
+        if run is not None:
+            run.metadata.update({"gate_fired": True, "refusal_reason": "no_query"})
+            run.tags.append("refused")
         return RagResult(
             answer="I could not form a database query from that question. Please rephrase it.",
             retrieval_type="sql_rag", role=role, refusal="no_query",
         )
+    if run is not None:
+        run.metadata.update({"gate_fired": False, "refusal_reason": None, "rows": len(rows)})
+        run.tags.append("answered")
     logger.info("sql_rag role=%s rows=%d sql=%s", role, len(rows), sql.replace("\n", " "))
     # No contexts: this branch retrieves rows, not passages. A grounding check has nothing
     # to score against, which the caller reports as unavailable rather than failed.
