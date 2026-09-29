@@ -9,6 +9,7 @@ dist/
 
 # Secrets
 .env
+.env*.local
 
 # Embedded Qdrant (rebuilt by ingestion); the rest of store/ is committed
 store/qdrant/

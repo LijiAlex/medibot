@@ -166,6 +166,29 @@ Then open <http://localhost:3000>. Note that Qdrant is embedded, which means one
 at a time: stop the backend before running the test suite, or both will fail to open the
 store.
 
+### Running behind the guardrail pipeline (optional)
+
+MediBot can be run on its own, as above, or behind
+[guardrail-eval-pipeline](https://github.com/LijiAlex/guardrail-eval-pipeline) — a
+separate service that checks every question on the way in and every answer on the way out,
+and keeps a record of what it decided.
+
+That repository has a `./run.sh` that starts both this backend and the pipeline in the
+right order and waits until each answers. Once they are up, run the frontend against the
+pipeline instead of against port 8000:
+
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:9000 pnpm dev
+```
+
+Nothing else changes: the pipeline answers in this app's own response shape, so the UI
+does not know the difference. Unset the variable and you are talking to MediBot directly
+again.
+
+Two small things exist here for that service's benefit, both inert unless asked for: the
+`eval` block described under `MEDIBOT_EXPOSE_EVAL`, and acceptance of a caller's
+`langsmith-trace` header so its spans and MediBot's land in one trace rather than two.
+
 ### Tracing (optional)
 
 Off by default, and off is a complete configuration: the app behaves identically and
