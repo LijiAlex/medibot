@@ -166,6 +166,22 @@ Then open <http://localhost:3000>. Note that Qdrant is embedded, which means one
 at a time: stop the backend before running the test suite, or both will fail to open the
 store.
 
+### Tracing (optional)
+
+Off by default, and off is a complete configuration: the app behaves identically and
+never contacts LangSmith. To record what happens inside a request — which branch ran,
+what the reranker scored, whether the relevance gate fired — add a key from
+[smith.langchain.com](https://smith.langchain.com) to `.env`:
+
+```bash
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=...
+```
+
+Runs are grouped under the project `medibot` unless `LANGSMITH_PROJECT` says otherwise.
+Nothing in the code switches this on, so installing the package does not start sending
+anybody's questions to a hosted service.
+
 ### Demo accounts
 
 Every password is the username followed by `-demo`, so `nurse.priya` signs in with
@@ -187,7 +203,7 @@ them.
 
 ```bash
 cd backend
-uv run pytest                 # 181 tests, about 3 minutes
+uv run pytest                 # 190 tests, about 3 minutes
 GROQ_API_KEY= uv run pytest   # skips the ones that call the model
 ```
 

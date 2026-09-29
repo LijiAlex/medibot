@@ -97,6 +97,21 @@ RERANK_TOP_N = 3  # what actually reaches the LLM
 # pins the separation so it cannot drift back into the answerable range.
 RELEVANCE_THRESHOLD = -4.0
 
+# --- Observability ---------------------------------------------------------
+# LangSmith reads LANGSMITH_TRACING, LANGSMITH_API_KEY and LANGSMITH_PROJECT out of the
+# environment itself; nothing in this codebase calls its API. load_dotenv() above has
+# already copied whatever .env holds into os.environ, so the only thing left to do is
+# name the project, which keeps traces out of LangSmith's catch-all "default" bucket.
+#
+# Nothing here switches tracing ON. That is deliberate: installing the package must not
+# start shipping every developer's questions to a hosted service. Tracing happens only
+# when LANGSMITH_TRACING is set explicitly, and with it unset a missing API key is not
+# an error — the @traceable decorators added in the next step become no-ops.
+#
+# setdefault, not getenv: the SDK reads os.environ, so the value has to be put back
+# there. An explicit setting (real env var or .env) is left alone.
+LANGSMITH_PROJECT = os.environ.setdefault("LANGSMITH_PROJECT", "medibot")
+
 # How far the classified collection must beat the best one a role may read before the
 # refusal names it. Below this the two are too close to call, and the honest reply is
 # that nothing was found rather than that access was denied. Measured 2026-09-11:
