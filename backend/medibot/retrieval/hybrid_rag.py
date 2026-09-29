@@ -80,6 +80,12 @@ class RagResult:
     retrieval_type: str = "hybrid_rag"                 # "hybrid_rag" | "sql_rag"
     role: str = ""
     sql: str | None = None                             # SQL branch only; spec line 168 is a minimum
+    # What the answer was built from, for a caller that asks to see it. `contexts` holds
+    # the reranked passages with their scores; the SQL branch leaves it empty because it
+    # retrieves rows, not chunks. Always populated — the API decides whether to expose it,
+    # so the choice lives in one place. Token usage and per-stage durations are not here:
+    # they are what tracing records, and a trace is where a reader should look for them.
+    contexts: list[dict] = field(default_factory=list)
     # Why there is no answer, when there is none. An empty sources list alone cannot tell
     # a permission decision from an empty search, and the label on screen must not claim
     # "nothing matched" about a question that was never searched for.
@@ -128,6 +134,22 @@ def _sources(ranked: list[tuple[Document, float]]) -> list[dict]:
     ]
 
 
+def _contexts(ranked: list[tuple[Document, float]]) -> list[dict]:
+    """The passages that reached the prompt, with the score that put them there.
+
+    `text` is `page_content`, which already begins with the heading breadcrumb, so a
+    reader of the envelope sees where each passage came from without a second lookup.
+    """
+    return [
+        {
+            "text": doc.page_content,
+            "score": round(float(score), 4),
+            **{k: doc.metadata[k] for k in ("source_document", "section_title", "collection")},
+        }
+        for doc, score in ranked
+    ]
+
+
 def _refusal(question: str, role: str) -> tuple[str, str]:
     """Why nothing came back, in the words the spec asks for (Component 6).
 
@@ -166,4 +188,10 @@ def answer(question: str, role: str) -> RagResult:
         return RagResult(answer=text, retrieval_type="hybrid_rag", role=role, refusal=why)
     chain = PROMPT | get_llm() | StrOutputParser()
     text = chain.invoke({"context": _format_context(ranked), "question": question})
-    return RagResult(answer=text, sources=_sources(ranked), retrieval_type="hybrid_rag", role=role)
+    return RagResult(
+        answer=text,
+        sources=_sources(ranked),
+        retrieval_type="hybrid_rag",
+        role=role,
+        contexts=_contexts(ranked),
+    )

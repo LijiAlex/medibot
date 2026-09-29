@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from medibot.api.auth import authenticate, create_token, decode_token
-from medibot.config import ROLE_COLLECTIONS
+from medibot.config import EXPOSE_EVAL, ROLE_COLLECTIONS
 from medibot.retrieval.chat import chat
 
 app = FastAPI(
@@ -135,6 +135,27 @@ class Source(BaseModel):
     collection: str
 
 
+class EvalContext(BaseModel):
+    """One passage that reached the prompt, with the score that put it there."""
+
+    text: str
+    score: float
+    source_document: str
+    section_title: str
+    collection: str
+
+
+class EvalEnvelope(BaseModel):
+    """What the answer was built from, for a caller that asks to see it.
+
+    `contexts` is empty on the analytical branch, which retrieves rows rather than
+    passages. Token usage and stage durations are not here: those are what tracing
+    records, and a trace is where a reader should look for them.
+    """
+
+    contexts: list[EvalContext] = []
+
+
 class ChatResponse(BaseModel):
     """Spec, Component 5. The four fields it names, plus the SQL when there was any."""
 
@@ -144,6 +165,8 @@ class ChatResponse(BaseModel):
     role: str
     sql: str | None = None
     refusal: str | None = None
+    # Present only when MEDIBOT_EXPOSE_EVAL is set; null otherwise, and nothing reads it.
+    eval: EvalEnvelope | None = None
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -162,4 +185,8 @@ def chat_endpoint(request: ChatRequest, role: Annotated[str, Depends(current_rol
         role=result.role,
         sql=result.sql,
         refusal=result.refusal,
+        # The gate lives here, in one place, rather than threaded through retrieval.
+        eval=EvalEnvelope(contexts=[EvalContext(**context) for context in result.contexts])
+        if EXPOSE_EVAL
+        else None,
     )

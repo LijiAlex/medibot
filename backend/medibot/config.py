@@ -112,6 +112,16 @@ RELEVANCE_THRESHOLD = -4.0
 # there. An explicit setting (real env var or .env) is left alone.
 LANGSMITH_PROJECT = os.environ.setdefault("LANGSMITH_PROJECT", "medibot")
 
+# Whether /chat also returns the passages it retrieved, with their rerank scores. Off by
+# default, because those passages are the full document text and belong in an answer no
+# more than the prompt does.
+#
+# A guardrail layer in front of MediBot needs them at request time: a grounding check
+# scores the answer against the passages it was supposedly built from, and that decision
+# cannot wait for a trace. Token usage and stage durations are deliberately NOT here —
+# they are what tracing records. Nothing about the answer itself changes either way.
+EXPOSE_EVAL = os.getenv("MEDIBOT_EXPOSE_EVAL", "").lower() in {"true", "1", "yes"}
+
 # How far the classified collection must beat the best one a role may read before the
 # refusal names it. Below this the two are too close to call, and the honest reply is
 # that nothing was found rather than that access was denied. Measured 2026-09-11:

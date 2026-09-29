@@ -126,6 +126,8 @@ needs_llm = pytest.mark.skipif(not os.getenv("GROQ_API_KEY"), reason="GROQ_API_K
 # The four the spec names (line 168, a minimum), plus what we add: the SQL when there was
 # any, and why there is no answer when there is none.
 SPEC_FIELDS = {"answer", "sources", "retrieval_type", "role", "sql", "refusal"}
+# `eval` is always present in the body and is null unless MEDIBOT_EXPOSE_EVAL is set.
+ALL_FIELDS = SPEC_FIELDS | {"eval"}
 
 
 def auth(role: str) -> dict[str, str]:
@@ -178,7 +180,8 @@ def test_a_blocked_document_question_returns_the_informative_refusal():
         headers=auth("nurse"),
     )
     body = response.json()
-    assert set(body) == SPEC_FIELDS
+    assert set(body) == ALL_FIELDS
+    assert body["eval"] is None          # the envelope is off unless asked for
     assert body["role"] == "nurse" and body["sources"] == []
     assert "billing documents" in body["answer"] and "a nurse cannot read" in body["answer"]
 
@@ -188,7 +191,8 @@ def test_a_document_question_answers_with_citations():
     response = client.post("/chat", json={"question": "What is the standard dose of meropenem?"},
                            headers=auth("doctor"))
     body = response.json()
-    assert set(body) == SPEC_FIELDS
+    assert set(body) == ALL_FIELDS
+    assert body["eval"] is None
     assert body["retrieval_type"] == "hybrid_rag" and body["sql"] is None
     assert len(body["sources"]) == 3
     assert set(body["sources"][0]) == {"source_document", "section_title", "collection"}

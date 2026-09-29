@@ -243,4 +243,6 @@ def answer(question: str, role: str) -> RagResult:
             retrieval_type="sql_rag", role=role, refusal="no_query",
         )
     logger.info("sql_rag role=%s rows=%d sql=%s", role, len(rows), sql.replace("\n", " "))
+    # No contexts: this branch retrieves rows, not passages. A grounding check has nothing
+    # to score against, which the caller reports as unavailable rather than failed.
     return RagResult(answer=text, sources=_sources(sql), retrieval_type="sql_rag", role=role, sql=sql)
